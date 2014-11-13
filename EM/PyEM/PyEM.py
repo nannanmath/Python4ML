@@ -4,71 +4,115 @@ Created on Nov 11, 2014
 @author: nannanmath
 '''
  
-#coding=utf-8
 import math  
 import copy  
 import numpy as np  
 import matplotlib.pyplot as plt  
+
+
+def loadDataSet(fileName):      #general function to parse tab -delimited floats
+    dataMat = []                #assume last column is target value
+    fr = open(fileName)
+    for line in fr.readlines():
+        curLine = line.strip().split(',')
+        fltLine = map(float,curLine[1:]) #map all elements to float()
+        dataMat.append(fltLine)
+    return dataMat
   
-isdebug = False  
-  
-# two Gaussian distribution with same var and different means.
-# k = 2  
-def ini_data(Sigma,Mu1,Mu2,k,N):  
-    global X  
+def ini_data(dataSet,k):  
     global Mu  
-    global Expectations  
-    X = np.zeros((1,N))  
-    Mu = np.random.random(2)  
-    Expectations = np.zeros((N,k))  
-    for i in xrange(0,N):  
-        if np.random.random(1) > 0.5:  
-            X[0,i] = np.random.normal()*Sigma + Mu1
-        else:  
-            X[0,i] = np.random.normal()*Sigma + Mu2  
-    if isdebug:  
-        print "***********"  
-        print u"init the observation vals X:"  
-        print X  
+    global Sigma
+    global Alpha
+    global Expectations
+   
+    numSam = np.shape(dataSet)[0]
+    dimSam = np.shape(dataSet)[1]
+    
+    Mu = np.random.rand(k,dimSam)
+    
+    Sigma = []
+    Alpha = []
+    for i in range(k):
+        Sigma.append(np.identity(dimSam))
+        Alpha.append(1.0/k)
+        
+    Mu[0,:] = 2.0,1.4
+    Mu[1,:] = 8.0,1.8
+    Sigma[0] = Sigma[0]*0.16
+    Sigma[1] = Sigma[1]*0.36
+    Alpha[0] = 0.4
+    Alpha[1] = 0.6
+    
+    Expectations = np.zeros((numSam,k))
+    
+def Gauss_pdf(data,sigma,mu):
+    numDim = np.shape(data)[1]
+    Gpdf = math.exp((-1.0/2)*np.dot(np.dot((data-mu),np.linalg.inv(sigma)),(data-mu).T))/math.sqrt((2*3.1415)**(numDim)*np.linalg.det(sigma))
+    return Gpdf
+
 # EM: E step, obtain Q[Z(i)] 
-def e_step(Sigma,k,N):  
-    global Expectations  
-    global Mu  
-    global X  
-    for i in xrange(0,N):  
+def e_step(dataSet,k): 
+    numSam = np.shape(dataSet)[0]
+    dimSam = np.shape(dataSet)[1]
+     
+    for i in xrange(0,numSam):  
         Denom = 0  
         for j in xrange(0,k):  
-            Denom += math.exp((-1/(2*(float(Sigma**2))))*(float(X[0,i]-Mu[j]))**2)  
+            Denom += Alpha[j] * Gauss_pdf(dataSet[i], Sigma[j], Mu[j])
         for j in xrange(0,k):  
-            Numer = math.exp((-1/(2*(float(Sigma**2))))*(float(X[0,i]-Mu[j]))**2)  
+            Numer = Alpha[j] * Gauss_pdf(dataSet[i], Sigma[j], Mu[j])
             Expectations[i,j] = Numer / Denom  
-    if isdebug:  
-        print "***********"  
-        print u"hidden varl E[Z]: "  
-        print Expectations  
+
 # EM: M step, max mu. 
-def m_step(k,N):  
-    global Expectations  
-    global X  
+def m_step(dataSet,k):  
+    numSam = np.shape(dataSet)[0]
+    
+    # update the Sigma
     for j in xrange(0,k):  
         Numer = 0  
         Denom = 0  
-        for i in xrange(0,N):  
-            Numer += Expectations[i,j]*X[0,i]  
-            Denom +=Expectations[i,j]  
-        Mu[j] = Numer / Denom   
+        for i in xrange(0,numSam):  
+            Numer += Expectations[i,j]*np.dot((dataSet[i]-Mu[j]).T,(dataSet[i]-Mu[j]))  
+            Denom += Expectations[i,j]  
+        Sigma[j] = Numer / Denom
+        
+    # update the means
+    for j in xrange(0,k):  
+        Numer = 0  
+        Denom = 0  
+        for i in xrange(0,numSam):  
+            Numer += Expectations[i,j]*dataSet[i]  
+            Denom += Expectations[i,j]  
+        Mu[j,:] = Numer / Denom   
+        
+    # update the weights
+    for j in xrange(0,k):  
+        Numer = 0    
+        for i in xrange(0,numSam):  
+            Numer += Expectations[i,j] 
+        Alpha[j] = Numer / numSam 
+        
 # iterate iter_num times, or up to Epsilon
-def run(Sigma,Mu1,Mu2,k,N,iter_num,Epsilon):  
-    ini_data(Sigma,Mu1,Mu2,k,N)  
-    print u"init <u1,u2>:", Mu  
+def run(dataSet,k,iter_num,Epsilon):  
+    ini_data(dataSet,k)   
     for i in range(iter_num):  
-        Old_Mu = copy.deepcopy(Mu)  
-        e_step(Sigma,k,N)  
-        m_step(k,N)  
-        print i,Mu  
-        if sum(abs(Mu-Old_Mu)) < Epsilon:  
-            break  
+        Old_Mu = copy.deepcopy(Mu)
+        Old_Sigma = copy.deepcopy(Sigma)
+        Old_Alpha = copy.deepcopy(Alpha)  
+        e_step(dataSet,k)  
+        m_step(dataSet,k)  
+        
+        deltaSigma = 0
+        deltaAlpha = 0
+        deltaMu = 0
+        for i in xrange(0,k):
+            deltaSigma += abs(Sigma[i]-Old_Sigma[i]).sum()
+            deltaAlpha += abs(Alpha[i]-Old_Alpha[i])
+            deltaMu += abs(Mu[i] - Old_Mu[i]).sum()
+        if (deltaSigma+deltaAlpha+deltaMu) < Epsilon:  
+            break
+        
 if __name__ == '__main__':  
-   run(6,40,20,2,1000,1000,0.0001)  
-   plt.hist(X[0,:],50)  
-   plt.show()
+    #dataMat = np.mat(loadDataSet('letter-recognition.data'))
+    dataMat = np.mat(loadDataSet('EM.test'))
+    run(dataMat,2,100,0.0001)  
